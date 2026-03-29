@@ -17,7 +17,7 @@ use WebmanTech\DTO\Integrations\ValidatorStopOnFirstFailureInterface;
 use WebmanTech\DTO\Reflection\ReflectionClassReader;
 use WebmanTech\DTO\Reflection\ReflectionReaderFactory;
 
-class BaseDTO
+class BaseDTO implements \JsonSerializable
 {
     /**
      * 根据 data 构建实例
@@ -85,7 +85,7 @@ class BaseDTO
                 if (!isset($rules[$key])) {
                     $rules[$key] = $keyRules;
                 } else {
-                    $allRules = array_merge($rules[$key], $keyRules);
+                    $allRules       = array_merge($rules[$key], $keyRules);
                     $uniqueAllRules = [];
                     foreach ($allRules as $rule) {
                         if (is_string($rule) && in_array($rule, $uniqueAllRules, true)) {
@@ -245,19 +245,19 @@ class BaseDTO
         return $data;
     }
 
-    private static string|null $tmpFromDataConfigCallFrom = null;
-    private static false|null|FromDataConfig $tmpFromDataConfig = false;
+    private static string|null               $tmpFromDataConfigCallFrom = null;
+    private static false|null|FromDataConfig $tmpFromDataConfig         = false;
 
     private static function getFromDataConfig(string $callFrom, ?ReflectionClassReader $factory = null): FromDataConfig|null
     {
         if (self::$tmpFromDataConfig === false) {
             self::$tmpFromDataConfigCallFrom = $callFrom;
-            $factory ??= ReflectionReaderFactory::fromClass(static::class);
+            $factory                         ??= ReflectionReaderFactory::fromClass(static::class);
 
             self::$tmpFromDataConfig = $factory->getPropertiesFromDataConfig() ?? match (true) {
-                is_subclass_of(static::class, BaseRequestDTO::class) => FromDataConfig::createForRequestDTO(),
+                is_subclass_of(static::class, BaseRequestDTO::class)                              => FromDataConfig::createForRequestDTO(),
                 static::class === BaseDTO::class || is_subclass_of(static::class, BaseDTO::class) => FromDataConfig::createForBaseDTO(),
-                default => null,
+                default                                                                           => null,
             };
         }
 
@@ -269,7 +269,45 @@ class BaseDTO
         if ($callFrom === self::$tmpFromDataConfigCallFrom) {
             // 哪边注入的，哪边重置
             self::$tmpFromDataConfigCallFrom = null;
-            self::$tmpFromDataConfig = false;
+            self::$tmpFromDataConfig         = false;
         }
+    }
+
+    /**
+     * 实现 JsonSerializable 接口
+     * @return array<string, mixed>
+     */
+    public function jsonSerialize(): array
+    {
+        $data       = [];
+        $reflection = new \ReflectionClass($this);
+
+        // 获取所有属性，包括 private 属性
+        $properties = $reflection->getProperties();
+
+        foreach ($properties as $property) {
+            $propertyName = $property->getName();
+            $value        = $property->getValue($this);
+
+            // 处理嵌套的 DTO 对象
+            if ($value instanceof self) {
+                $value = $value->jsonSerialize();
+            } elseif (is_array($value)) {
+                $value = array_map(function ($item) {
+                    if ($item instanceof self) {
+                        return $item->jsonSerialize();
+                    }
+                    return $item;
+                }, $value);
+            } elseif ($value instanceof DateTime) {
+                $value = $value->format($this->getDateTimeFormat());
+            } elseif ($value instanceof BackedEnum) {
+                $value = $value->value;
+            }
+
+            $data[$propertyName] = $value;
+        }
+
+        return $data;
     }
 }

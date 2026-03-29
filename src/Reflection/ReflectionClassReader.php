@@ -33,8 +33,8 @@ final class ReflectionClassReader
     public function getPropertyReflections(): array
     {
         if ($this->propertyReflections === null) {
-            $data = [];
-            $propertyReflections = $this->reflectionClass->getProperties(ReflectionProperty::IS_PUBLIC); // 仅 public
+            $data                = [];
+            $propertyReflections = $this->reflectionClass->getProperties(ReflectionProperty::IS_PUBLIC | ReflectionProperty::IS_PROTECTED | ReflectionProperty::IS_PRIVATE); // 包含所有访问级别
             foreach ($propertyReflections as $propertyReflection) {
                 if ($propertyReflection->isStatic()) {
                     // 不包含 static
@@ -226,9 +226,9 @@ final class ReflectionClassReader
             // 数据值
             $value = $data[$key];
             // 根据 ValidationRule 中定义出来的类型进行赋值
-            $validationRules = $this->getAttributionValidationRules($parameterReflection);
+            $validationRules     = $this->getAttributionValidationRules($parameterReflection);
             $constructArgs[$key] = $validationRules->makeValueFromRawType($value, $context);
-            $shouldResolve = false;
+            $shouldResolve       = false;
             if ($validationRules->array && !$validationRules->arrayItem && is_array($value) && array_is_list($value) && $value) {
                 // 对于列表数组的值，在 construct 上无法解析注释进行正确的类型赋值，此时需要在 property 中重新处理，所以不能移除掉
                 $shouldResolve = true;
@@ -251,7 +251,7 @@ final class ReflectionClassReader
                 $value = $data[$key];
                 // 根据 ValidationRule 中定义出来的类型进行赋值
                 $validationRules = $this->getAttributionValidationRules($propertyReflection);
-                $value = $validationRules->makeValueFromRawType($value, $context);
+                $value           = $validationRules->makeValueFromRawType($value, $context);
                 if (array_key_exists($key, $constructArgs)) {
                     // 有些参数是构造参数（比如列表数组），放到构造参数中
                     // 能放构造参数的尽量放构造里，因为可能该参数被设为 readonly
@@ -264,7 +264,15 @@ final class ReflectionClassReader
 
         $obj = $this->reflectionClass->newInstanceArgs($constructArgs);
         foreach ($objData as $key => $value) {
-            $obj->{$key} = $value;
+            // 优先使用 setXxx 方法
+            $setterMethod = 'set' . ucfirst($key);
+            if (method_exists($obj, $setterMethod)) {
+                $obj->{$setterMethod}($value);
+            } else {
+                // 否则,直接设置属性
+                $propertyReflection = $this->reflectionClass->getProperty($key);
+                $propertyReflection->setValue($obj, $value);
+            }
         }
 
         return $obj;
@@ -296,7 +304,7 @@ final class ReflectionClassReader
 
         if (!isset($cache[$attributionName])) {
             $reflectionAttributes = $reflection->getAttributes($attributionName, ReflectionAttribute::IS_INSTANCEOF);
-            $value = empty($reflectionAttributes)
+            $value                = empty($reflectionAttributes)
                 ? ($default instanceof Closure ? $default() : null)
                 : $reflectionAttributes[0]->newInstance();
 
@@ -304,7 +312,7 @@ final class ReflectionClassReader
                 $initializer($value);
             }
 
-            $cache[$attributionName] = $value ?? '__NULL__';
+            $cache[$attributionName]             = $value ?? '__NULL__';
             $this->attributionCache[$reflection] = $cache;
         }
 
